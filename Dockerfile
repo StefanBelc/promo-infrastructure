@@ -3,11 +3,13 @@ FROM maven:3.9-amazoncorretto-20 AS build
 WORKDIR /build
 
 
-COPY promobridge-sdk-2.0.jar /tmp/
-COPY promobridge-sdk-2.0.pom /tmp/
+COPY promobridge-sdk-4.5.jar /tmp/
+COPY promobridge-sdk-4.5.pom /tmp/
 RUN mvn install:install-file -X \
-    -Dfile=/tmp/promobridge-sdk-2.0.jar \
-    -DpomFile=/tmp/promobridge-sdk-2.0.pom \
+    -Dfile=/tmp/promobridge-sdk-4.5.jar \
+    -DpomFile=/tmp/promobridge-sdk-4.5.pom \
+
+RUN ls -R /root/.m2/repository/com/company/promobridge/
 
 COPY pom.xml .
 RUN mvn dependency:go-offline

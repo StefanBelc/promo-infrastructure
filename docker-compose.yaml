@@ -9,7 +9,7 @@ services:
     environment:
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_NODE_ID: 1
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
@@ -27,8 +27,10 @@ services:
       - kafka-data:/var/lib/kafka/data
     ports:
       - "9092:9092"
+      - "9094:9094"
+      - "9080:9080"
     healthcheck:
-      test: [ "CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list" ]
+      test: [ "CMD", "kafka-topics", "--bootstrap-server", "kafka:29092", "--list" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -40,7 +42,7 @@ services:
     depends_on:
       - kafka
     environment:
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
       SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: "NONE"
@@ -48,33 +50,38 @@ services:
       - "8081:8081"
 
   postgresql:
-      image: postgres:15-alpine
-      hostname: postgresql
-      volumes:
-        - pg_data:/var/lib/postgresql/data
-      environment:
-        PGDATA: /var/lib/postgresql/data
-        POSTGRES_DB: "conduktor-console"
-        POSTGRES_USER: "conduktor"
-        POSTGRES_PASSWORD: "some_password"
-        POSTGRES_HOST_AUTH_METHOD: "scram-sha-256"
-      ports:
-        - "5432:5432"
+    image: postgres:15-alpine
+    hostname: postgresql
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_DB: "conduktor-console"
+      POSTGRES_USER: "conduktor"
+      POSTGRES_PASSWORD: "some_password"
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256"
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U conduktor -d conduktor-console" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 
   redis:
-      image: redis:7.4.7-alpine
-      restart: unless-stopped
-      ports:
-        - "6379:6379"
-      volumes:
-        - redis_data:/data
-      command: >
-        redis-server
-        --appendonly yes
-        --requirepass myStrongPassword
-        --maxmemory 64mb
-        --maxmemory-policy allkeys-lru
+    image: redis:7.4.7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass myStrongPassword
+      --maxmemory 64mb
+      --maxmemory-policy allkeys-lru
   #
   tic-tac-toe-service:
     build:
@@ -83,14 +90,14 @@ services:
     restart: on-failure:3
     depends_on:
       postgresql:
-        condition: service_started
+        condition: service_healthy
       kafka:
         condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: sdk
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/promo
-      SPRING_DATASOURCE_USERNAME: promo
-      SPRING_DATASOURCE_PASSWORD: promo
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgresql:5432/promo_db
+      SPRING_DATASOURCE_USERNAME: conduktor
+      SPRING_DATASOURCE_PASSWORD: some_password
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_REDIS_HOST: redis
     ports:
@@ -103,18 +110,19 @@ services:
     restart: on-failure:3
     depends_on:
       postgresql:
-        condition: service_started
+        condition: service_healthy
       kafka:
         condition: service_healthy
       redis:
         condition: service_started
     environment:
       SPRING_PROFILES_ACTIVE: sdk
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/promo
-      SPRING_DATASOURCE_USERNAME: promo
-      SPRING_DATASOURCE_PASSWORD: promo
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgresql:5432/promo_db
+      SPRING_DATASOURCE_USERNAME: conduktor
+      SPRING_DATASOURCE_PASSWORD: some_password
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      SPRING_REDIS_HOST: redis
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PASSWORD: myStrongPassword
     ports:
       - "8083:8080"
 

@@ -1,6 +1,5 @@
 services:
 
-
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     restart: on-failure:3
@@ -30,7 +29,7 @@ services:
       - "9094:9094"
       - "9080:9080"
     healthcheck:
-      test: [ "CMD", "kafka-topics", "--bootstrap-server", "kafka:29092", "--list" ]
+      test: [ "CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -54,16 +53,17 @@ services:
     hostname: postgresql
     volumes:
       - pg_data:/var/lib/postgresql/data
+      - ./init-scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
     environment:
       PGDATA: /var/lib/postgresql/data
-      POSTGRES_DB: "conduktor-console"
+      POSTGRES_DB: "conducktor-console"
       POSTGRES_USER: "conduktor"
       POSTGRES_PASSWORD: "some_password"
-      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256"
+      POSTGRES_HOST_AUTH_METHOD: "trust"
     ports:
       - "5432:5432"
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U conduktor -d conduktor-console" ]
+      test: [ "CMD-SHELL", "pg_isready -U conduktor -d promo_db" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -82,7 +82,9 @@ services:
       --requirepass myStrongPassword
       --maxmemory 64mb
       --maxmemory-policy allkeys-lru
-  #
+
+
+
   tic-tac-toe-service:
     build:
       context: ..
@@ -126,6 +128,83 @@ services:
     ports:
       - "8083:8080"
 
+  event-gateway-service:
+    build:
+      context: ../event-gateway-service
+      dockerfile: Dockerfile
+    container_name: event-gateway-service
+    ports:
+      - "8084:8090"
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MYAPP_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - SPRING_KAFKA_CONSUMER_BOOTSTRAP_SERVERS=kafka:9092
+      - PROMO_SERVICE_URL=http://promo-service:8083
+      - TICTACTOE_SERVICE_URL=http://tictactoe-service:8082
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -u elastic:${ELASTIC_PASSWORD} http://localhost:9200/_cluster/health | grep -q '\"status\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  es-setup:
+    image: curlimages/curl:latest
+    container_name: es-setup
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    command: >-
+      sh -c
+      'echo "Setting kibana_system password..." &&
+      curl -s -o /dev/null -w "%{http_code}" -X POST -u elastic:$${ELASTIC_PASSWORD} -H "Content-Type: application/json" http://elasticsearch:9200/_security/user/kibana_system/_password -d "{\"password\":\"$${ELASTIC_PASSWORD}\"}" &&
+      echo " - Done."'
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: kibana
+    volumes:
+      - ./config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    environment:
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
+    ports:
+      - "5601:5601"
+    depends_on:
+      es-setup:
+        condition: service_completed_successfully
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.12.0
+    container_name: filebeat
+    user: root
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - BEATS_STRICT_PERMS=false
+    volumes:
+      - ./config/filebeat/filebeat.yml:/app/filebeat.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - elasticsearch
+
 
 volumes:
   pg_data:
@@ -133,4 +212,6 @@ volumes:
   kafka-data:
     driver: local
   redis_data:
+    driver: local
+  es_data:
     driver: local
